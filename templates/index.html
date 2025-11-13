@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Predicción de Fermentación</title>
+    <style>
+        /* Reset básico */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            padding: 40px;
+        }
+
+        .container {
+            background: #ffffff;
+            padding: 30px 40px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+
+        p {
+            text-align: center;
+            margin-bottom: 25px;
+            font-size: 0.95rem;
+            color: #555;
+        }
+
+        form {
+            display: grid;
+            gap: 15px;
+        }
+
+        label {
+            font-weight: 500;
+            font-size: 0.9rem;
+            color: #444;
+        }
+
+        input, select {
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            transition: all 0.2s ease;
+            background: #fafafa;
+        }
+
+        input:focus, select:focus {
+            border-color: #007bff;
+            outline: none;
+            background: #fff;
+            box-shadow: 0 0 0 3px rgba(0,123,255,0.15);
+        }
+
+        button {
+            padding: 12px;
+            font-size: 1rem;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            color: #fff;
+            cursor: pointer;
+            transition: background 0.3s ease, transform 0.1s ease;
+        }
+
+        button:hover {
+            background: linear-gradient(135deg, #0056b3, #00408a);
+        }
+
+        button:active {
+            transform: scale(0.97);
+        }
+
+        .resultado {
+            margin-top: 25px;
+            padding: 15px;
+            border-radius: 12px;
+            background: #eaf7ea;
+            color: #2e7d32;
+            font-size: 1.1rem;
+            text-align: center;
+            font-weight: 500;
+            box-shadow: inset 0 0 6px rgba(0,0,0,0.05);
+        }
+
+        .boton-redireccion {
+            display: block;
+            margin: 25px auto 0 auto;
+            padding: 12px 25px;
+            background: linear-gradient(135deg, #28a745, #218838);
+            color: white;
+            text-align: center;
+            border-radius: 10px;
+            text-decoration: none;
+            font-size: 1rem;
+            font-weight: 500;
+            transition: background 0.3s ease, transform 0.1s ease;
+            width: fit-content;
+        }
+
+        .boton-redireccion:hover {
+            background: linear-gradient(135deg, #218838, #1e7e34);
+        }
+
+        .boton-redireccion:active {
+            transform: scale(0.97);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        {% if reactor_state == "inactive" %}
+            <h1>Predicción de Tiempo de Fermentación</h1>
+            <p>Ingresa los siguientes datos para obtener una predicción precisa.</p>
+
+            <form action="/predict" method="post">
+                <div>
+                    <label for="variedad">Variedad:</label>
+                    <select id="variedad" name="variedad" required>
+                        <option value="0">Colombia</option>
+                        <option value="1">Caturra</option>
+                        <option value="2">Castillo</option>
+                        <option value="3">Bourbon</option>
+                        <option value="4">Catimor</option>
+                        <option value="5">Arábica</option>
+                        <option value="6">Cenicafé 1</option>
+                        <option value="7">Tabi</option>
+                        <option value="8">Catuaí</option>
+                        <option value="9">Topazio Amarelo</option>
+                        <option value="10">Icatú</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label for="altura">Altura:</label>
+                    <input type="number" step="0.01" min="0" id="altura" name="altura" value="1737" required>
+                </div>
+
+                <div>
+                    <label for="cantidad">Cantidad (L):</label>
+                    <input type="number" step="0.01" min="0" id="cantidad" name="cantidad" value="24" required>
+                </div>
+
+                <div>
+                    <label for="ph">pH:</label>
+                    <input type="number" step="0.01" min="0" id="ph" name="ph" value="3.6" required>
+                </div>
+
+                <div>
+                    <label for="temperatura">Temperatura:</label>
+                    <input type="number" step="0.01" min="0" id="temperatura" name="temperatura" value="20" required>
+                </div>
+
+                <div>
+                    <label for="categoria_puntaje">Categoría Puntaje:</label>
+                    <select id="categoria_puntaje" name="categoria_puntaje" required>
+                        <option value="0">Bueno</option>
+                        <option value="1">Muy Bueno</option>
+                        <option value="2">Excelente</option>
+                    </select>
+                </div>
+
+                <button type="submit">Predecir</button>
+            </form>
+
+            {% if prediccion %}
+                <div class="resultado">
+                    <h3>Resultado de la predicción:</h3>
+                    <p>{{ prediccion }} horas.</p>
+                </div>
+
+                <a href="/start_fermentacion" class="boton-redireccion">Iniciar Fermentación</a>
+            {% endif %}
+        {% elif reactor_state == "running" %}
+            <h1>Fermentación en Proceso</h1>
+            <p>Ya existe una fermentación activa en el Biorreactor.</p>
+            <a href="http://192.168.1.43:3000" class="boton-redireccion">Ir al Dashboard</a>
+            <form action="/stop_fermentacion" method="POST" style="margin-top:20px;">
+                <button type="submit" class="boton-redireccion" style="background:linear-gradient(135deg,#dc3545,#a71d2a);">
+                    Detener Fermentación
+                </button>
+            </form>
+
+        {% else %}
+            <h1>Error consultando estado</h1>
+            <p>No se pudo determinar el estado del Biorreactor.</p>
+        {% endif %}
+    </div>
+</body>
+</html>
