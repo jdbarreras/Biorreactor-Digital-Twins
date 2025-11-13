@@ -1,2 +1,0 @@
-Modificado a partir del repositorio:
-https://github.com/eclipse-ditto/ditto-examples/tree/master/influxdb
