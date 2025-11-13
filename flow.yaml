@@ -1,0 +1,248 @@
+id: fermentacion-proceso
+namespace: cafe
+
+inputs:
+  - id: Altura
+    type: STRING
+  - id: Cantidad_L
+    type: STRING
+  - id: Categoria_Puntaje
+    type: STRING
+  - id: Temperatura
+    type: STRING
+  - id: Variedad
+    type: STRING
+  - id: pH
+    type: STRING
+  - id: tiempo_predicho_horas
+    type: STRING
+  - id: tiempo_predicho_segundos
+    type: STRING
+
+tasks:
+  # 1. Log de inicio
+  - id: inicio
+    type: io.kestra.plugin.core.log.Log
+    message: "Iniciando fermentación con duración de {{ read(inputs.tiempo_predicho_horas) }} horas."
+
+  # 2. Actualizar atributos del dispositivo
+  - id: start_bioreactor
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://192.168.1.43:8080/api/2/things/org.acme:my-dev/attributes/reactorState"
+    method: PUT
+    contentType: application/json
+    options:
+      basicAuthUser: ditto
+      basicAuthPassword: ditto
+    body: |
+          "running"
+
+  - id: update_br_properties
+    type: io.kestra.plugin.core.flow.Parallel
+    tasks:
+      - id: variedad_update
+        type: io.kestra.plugin.core.http.Request
+        uri: "http://192.168.1.43:8080/api/2/things/org.acme:my-dev/attributes/variedad"
+        method: PUT
+        contentType: application/json
+        options:
+          basicAuthUser: ditto
+          basicAuthPassword: ditto
+        body: |
+              "{{ read(inputs.Variedad) }}"
+
+      - id: cantidad_update
+        type: io.kestra.plugin.core.http.Request
+        uri: "http://192.168.1.43:8080/api/2/things/org.acme:my-dev/attributes/cantidad"
+        method: PUT
+        contentType: application/json
+        options:
+          basicAuthUser: ditto
+          basicAuthPassword: ditto
+        body: |
+              "{{ read(inputs.Cantidad_L) }}"
+      - id: altura_update
+        type: io.kestra.plugin.core.http.Request
+        uri: "http://192.168.1.43:8080/api/2/things/org.acme:my-dev/attributes/altura"
+        method: PUT
+        contentType: application/json
+        options:
+          basicAuthUser: ditto
+          basicAuthPassword: ditto
+        body: |
+              "{{ read(inputs.Altura) }}"
+
+  # 2.1 Iniciar fermentación en Jetson
+  - id: iniciar-fermentacion
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://192.168.1.43:6000/start_sensors"
+    method: POST
+    contentType: application/json
+    body: |
+      {
+        "publish": true
+      }
+  # 2.2 Iniciar valoración de sensores
+  - id: iniciar_valoracion_sensores
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://192.168.1.43:6000/state_control"
+    method: POST
+    contentType: application/json
+    body: |
+      {
+        "publish": true
+      }
+
+  # 3. Bucle de control
+  - id: wait-initial
+    type: io.kestra.plugin.core.flow.Sleep
+    duration: PT10M   # 10 minutos
+
+  - id: loop-control
+    type: io.kestra.plugin.core.flow.LoopUntil
+    checkFrequency:
+      maxDuration: PT{{ read(inputs.tiempo_predicho_segundos) }}S
+    condition: "{{ (outputs.get_sensor_data_ph.row._value ?? '5') < (read(inputs.pH) | number('FLOAT')) }}"
+    tasks:
+    # 3.1 Ejecutar modelo de temperatura (flag run)
+    - id: predict_temperature
+      type: io.kestra.plugin.core.http.Request
+      uri: "http://192.168.1.43:6000/predict_temp"
+      method: POST
+      contentType: application/json
+      body: |
+        {
+        "variedad": {{ read(inputs.Variedad) }},
+        "cantidad": {{ read(inputs.Cantidad_L) }},
+        "altura": {{ read(inputs.Altura) }}
+        }
+    
+    # 3.2 Verificar si excede temperatura inicial
+    - id: check-temperature
+      type: io.kestra.plugin.core.flow.If
+      condition: "{{ (outputs.predict_temperature.body | number('FLOAT')) > (read(inputs.Temperatura) | number('FLOAT')) }}"
+      then:
+        - id: activate-cooling
+          type: io.kestra.plugin.core.http.Request
+          uri: "http://192.168.1.43:6000/cooling"
+          method: POST
+          contentType: application/json
+          body: |
+            { "cooling": true }
+      else:
+        - id : deactivate-cooling
+          type: io.kestra.plugin.core.http.Request
+          uri: "http://192.168.1.43:6000/cooling"
+          method: POST
+          contentType: application/json
+          body: |
+            { "cooling": false }
+
+    # 3.3 Esperar 5 minutos antes de la siguiente iteración
+    # 4 min + 1 min entre iteraciones del loop
+    - id: wait-5m
+      type: io.kestra.plugin.core.flow.Sleep
+      duration: PT4M
+
+    # 3.3 Leer datos de Ditto
+    - id: get_sensor_data_ph
+      type: io.kestra.plugin.influxdb.FluxQuery
+      connection:
+        url: "http://192.168.1.43:8086"
+        token: "Ow3PqYUGHxJ2OK7Tnsaqc9Vtl4OT9SITySvA3Nog_qV70j4GVwE3tgCvL8KPZZjV2xsNMH13XwpOPuyDUVt3_w=="
+      org: "cafe"
+      query: |
+        from(bucket: "biorreactor")
+          |> range(start: -5m)
+          |> filter(fn : (r) => r["_field"] == "ph")
+          |> filter(fn : (r) => r["deviceId"] == "org.acme:my-dev")
+          |> last()
+          |> keep(columns: ["_value"])
+      fetchType: FETCH_ONE
+
+    # 3.5 Guardar valores
+    - id: parse_sensor_data
+      type: io.kestra.plugin.core.log.Log
+      message: |
+        pH actual: {{ outputs.get_sensor_data_ph.row._value }}
+
+
+  # 4. Finalizar Fermentación
+  - id : cooling_off
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://192.168.1.43:6000/cooling"
+    method: POST
+    contentType: application/json
+    body: |
+      { "cooling": false }
+
+  - id: terminar_valoracion_sensores
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://192.168.1.43:6000/state_control"
+    method: POST
+    contentType: application/json
+    body: |
+      {
+        "publish": false
+      }
+
+  - id: apagar_sensores
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://192.168.1.43:6000/start_sensors"
+    method: POST
+    contentType: application/json
+    body: |
+      {
+        "publish": false
+      }
+
+  - id: base_br_properties
+    type: io.kestra.plugin.core.flow.Parallel
+    tasks:
+      - id: variedad_end
+        type: io.kestra.plugin.core.http.Request
+        uri: "http://192.168.1.43:8080/api/2/things/org.acme:my-dev/attributes/variedad"
+        method: PUT
+        contentType: application/json
+        options:
+          basicAuthUser: ditto
+          basicAuthPassword: ditto
+        body: |
+            "-"
+
+      - id: cantidad_end
+        type: io.kestra.plugin.core.http.Request
+        uri: "http://192.168.1.43:8080/api/2/things/org.acme:my-dev/attributes/cantidad"
+        method: PUT
+        contentType: application/json
+        options:
+          basicAuthUser: ditto
+          basicAuthPassword: ditto
+        body: |
+            "-"
+
+      - id: altura_end
+        type: io.kestra.plugin.core.http.Request
+        uri: "http://192.168.1.43:8080/api/2/things/org.acme:my-dev/attributes/altura"
+        method: PUT
+        contentType: application/json
+        options:
+          basicAuthUser: ditto
+          basicAuthPassword: ditto
+        body: |
+            "-"
+
+  - id: terminar-fermentacion
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://192.168.1.43:8080/api/2/things/org.acme:my-dev/attributes/reactorState"
+    method: PUT
+    contentType: application/json
+    options:
+      basicAuthUser: ditto
+      basicAuthPassword: ditto
+    body: |
+          "inactive"
+        
+  - id: fin
+    type: io.kestra.plugin.core.log.Log
+    message: "Fermentación finalizada."
